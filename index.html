@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Strategy Optimizer</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap');
+    body { font-family: 'Inter', sans-serif; background-color: #000000; color: #ffffff; }
+
+    .number-chip {
+      touch-action: none;
+      cursor: grab;
+      user-select: none;
+      transition: transform 0.1s, background-color 0.2s;
+    }
+    .number-chip:active { cursor: grabbing; }
+    .number-chip.dragging {
+      opacity: 0.9;
+      position: fixed;
+      z-index: 9999;
+      pointer-events: none;
+      transform: scale(1.15);
+      box-shadow: 0 10px 30px -5px rgba(100, 100, 255, 0.4);
+      background-color: #4f46e5;
+      border-color: #818cf8;
+      color: white;
+    }
+
+    .slot-container { transition: all 0.2s ease; }
+    .slot-container.drag-over {
+      background-color: #18181b;
+      border-color: #6366f1;
+      box-shadow: inset 0 0 20px rgba(99, 102, 241, 0.1);
+    }
+
+    .chip-placeholder {
+      height: 42px;
+      background: rgba(255,255,255,0.03);
+      border: 1px dashed rgba(255,255,255,0.1);
+      border-radius: 0.375rem;
+      margin-bottom: 0.5rem;
+    }
+
+    .text-gradient {
+      background-clip: text;
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-image: linear-gradient(to right, #818cf8, #c084fc);
+    }
+
+    .calculating {
+      opacity: 0.5;
+      animation: pulse 1s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 0.5; }
+      50% { opacity: 0.2; }
+    }
+  </style>
+</head>
+<body class="min-h-screen flex flex-col items-center justify-center py-6 px-4">
+
+  <header class="text-center mb-8">
+    <h1 class="text-3xl font-black tracking-tight mb-2">
+      STRATEGY <span class="text-gradient">OPTIMIZER</span>
+    </h1>
+    <p class="text-zinc-500 text-xs uppercase tracking-widest font-semibold">
+      Dynamic Probability Engine
+    </p>
+  </header>
+
+  <div class="w-full max-w-lg">
+    <div class="mb-8 text-center bg-zinc-900/50 border border-zinc-800 rounded-2xl p-6 shadow-2xl backdrop-blur-sm">
+      <div class="text-[10px] text-zinc-500 uppercase tracking-widest font-bold mb-2">WIN PROBABILITY</div>
+
+      <div id="result-container">
+        <div id="percentage-display" class="text-6xl font-black text-white mb-2 tracking-tighter tabular-nums">
+          33.60%
+        </div>
+        <div id="fraction-display" class="text-zinc-600 font-mono text-xs">
+          10160 / 30,240 scenarios
+        </div>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-5 gap-2 select-none" id="board-area">
+      <div id="slots-wrapper" class="contents"></div>
+    </div>
+  </div>
+
+  <script>
+    const NUM_SLOTS = 5;
+    const NUM_CARDS = 10;
+    const FULL_MASK = (1 << NUM_CARDS) - 1; // 1023
+    const SLOT_NAMES = ['A', 'B', 'C', 'D', 'E'];
+
+    // This UI controls ONLY the FIRST MOVE mapping (card -> slot).
+    // After the first placement, the engine plays optimally (MDP/DP).
+    // Start from the known optimal first-move policy:
+    // 1->A, 2-4->B, 5-6->C, 7-9->D, 10->E
+    let currentStrategy = [0, 1, 1, 1, 2, 2, 3, 3, 3, 4];
+
+    // Memoization cache for DP
+    let memo = new Map();
+
+    // --- Initialization ---
+    function init() {
+      renderSlots();
+      renderNumbers();
+      setTimeout(calculateProbability, 50);
+    }
+
+    function renderSlots() {
+      const wrapper = document.getElementById('slots-wrapper');
+      wrapper.innerHTML = '';
+
+      SLOT_NAMES.forEach((name, index) => {
+        const div = document.createElement('div');
+        div.className = `slot-container flex flex-col items-center bg-zinc-900 border border-zinc-800 rounded-xl p-2 min-h-[160px] relative`;
+        div.dataset.slotIndex = index;
+
+        div.innerHTML = `
+          <div class="text-zinc-600 text-[10px] font-bold mb-3 absolute top-2">${name}</div>
+          <div class="slot-content w-full flex flex-col gap-1.5 items-center mt-6 pb-2 flex-grow" id="slot-${index}"></div>
+        `;
+        wrapper.appendChild(div);
+      });
+    }
+
+    function renderNumbers() {
+      for (let i = 0; i < NUM_SLOTS; i++) {
+        document.getElementById(`slot-${i}`).innerHTML = '';
+      }
+
+      currentStrategy.forEach((slotIndex, cardIndex) => {
+        const cardVal = cardIndex + 1;
+        const chip = createChip(cardVal);
+        document.getElementById(`slot-${slotIndex}`).appendChild(chip);
+      });
+
+      setupTouchAndDrag();
+    }
+
+    function createChip(number) {
+      const div = document.createElement('div');
+      let colorClass = "text-zinc-300 bg-zinc-800 border-zinc-700";
+      if (number === 1 || number === 10) colorClass = "text-indigo-200 bg-indigo-900/40 border-indigo-800/60";
+      div.className = `number-chip w-full border shadow-sm rounded-md text-center py-2.5 text-sm font-bold ${colorClass}`;
+      div.textContent = number;
+      div.dataset.number = number;
+      return div;
+    }
+
+    // --- Interaction Logic ---
+    let activeDrag = null;
+    let placeholder = null;
+
+    function setupTouchAndDrag() {
+      const chips = document.querySelectorAll('.number-chip');
+      chips.forEach(chip => {
+        chip.onmousedown = startDrag;
+        chip.ontouchstart = (e) => {
+          if (e.touches.length > 1) return;
+          startDrag(e.touches[0], chip);
+        };
+      });
+    }
+
+    function startDrag(e, targetChip) {
+      const chip = targetChip || e.target;
+      if (!chip.classList.contains('number-chip')) return;
+
+      activeDrag = chip;
+      const parent = chip.parentNode;
+
+      placeholder = document.createElement('div');
+      placeholder.className = 'chip-placeholder w-full';
+      parent.insertBefore(placeholder, chip);
+
+      const rect = chip.getBoundingClientRect();
+
+      chip.classList.add('dragging');
+      chip.style.width = rect.width + 'px';
+      chip.style.left = (e.clientX - rect.width / 2) + 'px';
+      chip.style.top = (e.clientY - rect.height / 2) + 'px';
+
+      document.body.appendChild(chip);
+
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onEnd);
+      document.addEventListener('touchmove', onTouchMove, { passive: false });
+      document.addEventListener('touchend', onEnd);
+    }
+
+    function onMove(e) {
+      if (!activeDrag) return;
+      moveChip(e.clientX, e.clientY);
+    }
+
+    function onTouchMove(e) {
+      if (!activeDrag) return;
+      e.preventDefault();
+      moveChip(e.touches[0].clientX, e.touches[0].clientY);
+    }
+
+    function moveChip(x, y) {
+      const width = activeDrag.offsetWidth;
+      const height = activeDrag.offsetHeight;
+      activeDrag.style.left = (x - width / 2) + 'px';
+      activeDrag.style.top = (y - height / 2) + 'px';
+
+      document.querySelectorAll('.slot-container').forEach(s => s.classList.remove('drag-over'));
+      const elBelow = document.elementFromPoint(x, y);
+      const slot = elBelow ? elBelow.closest('.slot-container') : null;
+      if (slot) slot.classList.add('drag-over');
+    }
+
+    function onEnd(e) {
+      if (!activeDrag) return;
+
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onEnd);
+      document.removeEventListener('touchmove', onTouchMove);
+      document.removeEventListener('touchend', onEnd);
+
+      const x = e.clientX || (e.changedTouches ? e.changedTouches[0].clientX : 0);
+      const y = e.clientY || (e.changedTouches ? e.changedTouches[0].clientY : 0);
+
+      const elBelow = document.elementFromPoint(x, y);
+      const slot = elBelow ? elBelow.closest('.slot-container') : null;
+
+      activeDrag.classList.remove('dragging');
+      activeDrag.style.position = '';
+      activeDrag.style.width = '';
+      activeDrag.style.left = '';
+      activeDrag.style.top = '';
+
+      if (slot) {
+        const content = slot.querySelector('.slot-content');
+        const num = parseInt(activeDrag.dataset.number, 10);
+        const siblings = [...content.querySelectorAll('.number-chip')];
+
+        if (activeDrag.parentNode === document.body) document.body.removeChild(activeDrag);
+
+        let inserted = false;
+        for (let sib of siblings) {
+          if (parseInt(sib.dataset.number, 10) > num) {
+            content.insertBefore(activeDrag, sib);
+            inserted = true;
+            break;
+          }
+        }
+        if (!inserted) content.appendChild(activeDrag);
+
+        if (placeholder && placeholder.parentNode) placeholder.parentNode.removeChild(placeholder);
+      } else {
+        if (activeDrag.parentNode === document.body) document.body.removeChild(activeDrag);
+        if (placeholder && placeholder.parentNode) {
+          placeholder.parentNode.replaceChild(activeDrag, placeholder);
+        }
+      }
+
+      activeDrag = null;
+      placeholder = null;
+      document.querySelectorAll('.slot-container').forEach(s => s.classList.remove('drag-over'));
+
+      updateStrategyFromDOM();
+
+      const resultContainer = document.getElementById('result-container');
+      resultContainer.classList.add('calculating');
+      setTimeout(calculateProbability, 50);
+    }
+
+    function updateStrategyFromDOM() {
+      for (let i = 0; i < NUM_SLOTS; i++) {
+        const container = document.getElementById(`slot-${i}`);
+        const chips = container.querySelectorAll('.number-chip');
+        chips.forEach(chip => {
+          const val = parseInt(chip.dataset.number, 10);
+          currentStrategy[val - 1] = i;
+        });
+      }
+    }
+
+    // --- PROBABILITY ENGINE (FIXED) ---
+    // Computes the TRUE optimal play AFTER the first move.
+    // Your draggable chips define only the first-move mapping.
+
+    function calculateProbability() {
+      try {
+        memo.clear();
+        const board = new Int8Array(5); // all zeros
+        const result = solve(board, FULL_MASK, 0);
+        displayResults(result);
+      } catch (e) {
+        console.error(e);
+      } finally {
+        document.getElementById('result-container').classList.remove('calculating');
+      }
+    }
+
+    // Encode board into a small integer for faster memo keys
+    function boardKey(board) {
+      // base-11 encoding (values 0..10)
+      return board[0] + 11*board[1] + 121*board[2] + 1331*board[3] + 14641*board[4];
+    }
+
+    function isIncreasing(board) {
+      for (let i = 0; i < 4; i++) {
+        if (!(board[i] < board[i+1])) return false;
+      }
+      return true;
+    }
+
+    function solve(board, unseenMask, filledCount) {
+      if (filledCount === NUM_SLOTS) {
+        // With valid-move rules this should always be increasing, but keep it safe.
+        return isIncreasing(board) ? 1.0 : 0.0;
+      }
+
+      const key = `${filledCount}|${unseenMask}|${boardKey(board)}`;
+      if (memo.has(key)) return memo.get(key);
+
+      let total = 0.0;
+      let count = 0;
+
+      // Iterate available cards from unseenMask
+      let tempMask = unseenMask;
+      let card = 1;
+      while (tempMask > 0) {
+        if ((tempMask & 1) === 1) {
+          const nextMask = unseenMask ^ (1 << (card - 1));
+
+          let val = 0.0;
+
+          if (filledCount === 0) {
+            // FIRST MOVE is forced by your draggable mapping
+            const slot = currentStrategy[card - 1];
+            const newBoard = new Int8Array(board);
+            newBoard[slot] = card;
+            val = solve(newBoard, nextMask, filledCount + 1);
+          } else {
+            // AFTER first move: choose the BEST slot (optimal MDP action)
+            let best = 0.0;
+
+            for (let s = 0; s < NUM_SLOTS; s++) {
+              if (board[s] !== 0) continue;
+
+              // Validity: all filled left must be < card
+              let ok = true;
+              for (let l = 0; l < s; l++) {
+                if (board[l] !== 0 && board[l] > card) { ok = false; break; }
+              }
+              if (!ok) continue;
+
+              // Validity: all filled right must be > card
+              for (let r = s + 1; r < NUM_SLOTS; r++) {
+                if (board[r] !== 0 && board[r] < card) { ok = false; break; }
+              }
+              if (!ok) continue;
+
+              const newBoard = new Int8Array(board);
+              newBoard[s] = card;
+              const candidate = solve(newBoard, nextMask, filledCount + 1);
+              if (candidate > best) best = candidate;
+            }
+
+            val = best; // if no valid slot, stays 0
+          }
+
+          total += val;
+          count++;
+        }
+        tempMask >>= 1;
+        card++;
+      }
+
+      const avg = count ? (total / count) : 0.0;
+      memo.set(key, avg);
+      return avg;
+    }
+
+    function displayResults(probability) {
+      const percent = (probability * 100).toFixed(2);
+      const wins = Math.round(probability * 30240); // 10*9*8*7*6
+
+      const percentDisplay = document.getElementById('percentage-display');
+      const fractionDisplay = document.getElementById('fraction-display');
+
+      percentDisplay.textContent = `${percent}%`;
+      fractionDisplay.textContent = `${wins.toLocaleString()} / 30,240 scenarios`;
+
+      if (probability > 0.333) {
+        percentDisplay.className = "text-6xl font-black text-green-400 mb-2 tracking-tighter tabular-nums";
+      } else if (probability > 0.30) {
+        percentDisplay.className = "text-6xl font-black text-indigo-400 mb-2 tracking-tighter tabular-nums";
+      } else {
+        percentDisplay.className = "text-6xl font-black text-white mb-2 tracking-tighter tabular-nums";
+      }
+    }
+
+    init();
+  </script>
+</body>
+</html>
