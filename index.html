@@ -3,402 +3,482 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-  <title>Strategy Optimizer</title>
+  <title>Live Strategy Advisor</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap');
-    body { font-family: 'Inter', sans-serif; background-color: #000000; color: #ffffff; }
+    body { font-family: 'Inter', sans-serif; background-color: #09090b; color: #ffffff; }
 
-    .number-chip {
-      touch-action: none;
-      cursor: grab;
-      user-select: none;
-      transition: transform 0.1s, background-color 0.2s;
+    /* Animations */
+    @keyframes pulse-green {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(74, 222, 128, 0.4); border-color: rgba(74, 222, 128, 0.8); }
+      50% { box-shadow: 0 0 15px 0 rgba(74, 222, 128, 0.2); border-color: rgba(74, 222, 128, 1); }
     }
-    .number-chip:active { cursor: grabbing; }
-    .number-chip.dragging {
-      opacity: 0.9;
-      position: fixed;
-      z-index: 9999;
-      pointer-events: none;
-      transform: scale(1.15);
-      box-shadow: 0 10px 30px -5px rgba(100, 100, 255, 0.4);
-      background-color: #4f46e5;
-      border-color: #818cf8;
-      color: white;
+    
+    @keyframes pulse-gold {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(234, 179, 8, 0.4); border-color: rgba(234, 179, 8, 0.8); }
+      50% { box-shadow: 0 0 15px 0 rgba(234, 179, 8, 0.2); border-color: rgba(234, 179, 8, 1); }
     }
 
-    .slot-container { transition: all 0.2s ease; }
-    .slot-container.drag-over {
-      background-color: #18181b;
-      border-color: #6366f1;
-      box-shadow: inset 0 0 20px rgba(99, 102, 241, 0.1);
+    .slot-container {
+      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      background: #18181b;
     }
 
-    .chip-placeholder {
-      height: 42px;
-      background: rgba(255,255,255,0.03);
-      border: 1px dashed rgba(255,255,255,0.1);
-      border-radius: 0.375rem;
-      margin-bottom: 0.5rem;
+    /* Hints */
+    .slot-best {
+      animation: pulse-green 2s infinite;
+      background: rgba(22, 101, 52, 0.1);
+      border-width: 2px;
+    }
+    .slot-tie {
+      animation: pulse-gold 2s infinite;
+      background: rgba(161, 98, 7, 0.1);
+      border-width: 2px;
+    }
+    
+    .slot-valid { border-color: #3f3f46; }
+    .slot-bad { opacity: 0.5; background: rgba(127, 29, 29, 0.1); border-color: #450a0a; }
+    .slot-invalid { opacity: 0.2; pointer-events: none; background: #000; border-color: #27272a; }
+    
+    .number-btn { transition: all 0.15s; }
+    .number-btn:active { transform: scale(0.95); }
+    .number-btn.used {
+      opacity: 0.2; pointer-events: none; background: #000; border-color: #27272a; text-decoration: line-through;
+    }
+    .number-btn.active-card {
+      background-color: #4f46e5; border-color: #818cf8; color: white;
+      transform: scale(1.1); box-shadow: 0 0 20px rgba(79, 70, 229, 0.4);
     }
 
-    .text-gradient {
-      background-clip: text;
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-      background-image: linear-gradient(to right, #818cf8, #c084fc);
-    }
+    .placed-chip { animation: popIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275); }
+    @keyframes popIn { from { transform: scale(0.5); opacity: 0; } to { transform: scale(1); opacity: 1; } }
 
-    .calculating {
-      opacity: 0.5;
-      animation: pulse 1s cubic-bezier(0.4, 0, 0.6, 1) infinite;
-    }
-    @keyframes pulse {
-      0%, 100% { opacity: 0.5; }
-      50% { opacity: 0.2; }
+    /* Strategy Table Styles */
+    .strategy-row { border-bottom: 1px solid #27272a; }
+    .strategy-row:last-child { border-bottom: none; }
+    .strategy-card-pill {
+      background: #3f3f46; color: #e4e4e7; font-weight: 700;
+      padding: 2px 8px; border-radius: 999px; font-size: 0.75rem;
     }
   </style>
 </head>
-<body class="min-h-screen flex flex-col items-center justify-center py-6 px-4">
+<body class="min-h-screen flex flex-col items-center py-8 px-4 pb-20">
 
-  <header class="text-center mb-8">
-    <h1 class="text-3xl font-black tracking-tight mb-2">
-      STRATEGY <span class="text-gradient">OPTIMIZER</span>
-    </h1>
-    <p class="text-zinc-500 text-xs uppercase tracking-widest font-semibold">
-      Dynamic Probability Engine
-    </p>
-  </header>
+  <!-- Header / Stats -->
+  <header class="text-center mb-6 w-full max-w-lg">
+    <div class="flex justify-between items-end mb-4 border-b border-zinc-800 pb-4">
+      <button onclick="resetGame()" class="bg-zinc-800 hover:bg-zinc-700 text-xs px-3 py-1.5 rounded text-zinc-300 transition-colors border border-zinc-700">
+        Reset
+      </button>
+    </div>
 
-  <div class="w-full max-w-lg">
-    <div class="mb-8 text-center bg-zinc-900/50 border border-zinc-800 rounded-2xl p-6 shadow-2xl backdrop-blur-sm">
-      <div class="text-[10px] text-zinc-500 uppercase tracking-widest font-bold mb-2">WIN PROBABILITY</div>
-
-      <div id="result-container">
-        <div id="percentage-display" class="text-6xl font-black text-white mb-2 tracking-tighter tabular-nums">
+    <div class="bg-zinc-900/50 border border-zinc-800 rounded-2xl p-6 shadow-2xl backdrop-blur-sm relative overflow-hidden">
+      <div id="glow-bg" class="absolute inset-0 opacity-10 bg-indigo-500 transition-opacity duration-500"></div>
+      <div class="relative z-10">
+        <div class="text-[10px] text-zinc-500 uppercase tracking-widest font-bold mb-1">WIN PROBABILITY</div>
+        <div id="prob-display" class="text-5xl font-black text-white tracking-tighter tabular-nums transition-colors duration-300">
           33.60%
         </div>
-        <div id="fraction-display" class="text-zinc-600 font-mono text-xs">
-          10160 / 30,240 scenarios
+        <div id="guidance-text" class="text-zinc-400 text-xs font-mono mt-2 h-4">
+          Select a card...
         </div>
       </div>
     </div>
+  </header>
 
-    <div class="grid grid-cols-5 gap-2 select-none" id="board-area">
-      <div id="slots-wrapper" class="contents"></div>
+  <!-- Game Board -->
+  <div class="w-full max-w-lg mb-6">
+    <div class="grid grid-cols-5 gap-2" id="board-area"></div>
+  </div>
+
+  <!-- Controls -->
+  <div class="w-full max-w-lg mb-8">
+    <div class="text-[10px] text-zinc-500 uppercase tracking-widest font-bold mb-3 text-center">SELECT DRAWN CARD</div>
+    <div class="grid grid-cols-5 gap-2" id="number-pad"></div>
+  </div>
+
+  <!-- FUTURE STRATEGY TABLE -->
+  <div class="w-full max-w-lg">
+    <div class="bg-zinc-900 border border-zinc-800 rounded-2xl overflow-hidden">
+      <div class="bg-zinc-800/50 px-4 py-3 border-b border-zinc-800 flex justify-between items-center">
+        <span class="text-xs font-bold text-indigo-400 uppercase tracking-wider">Future Strategy</span>
+        <span class="text-[10px] text-zinc-500">Best slots for remaining cards</span>
+      </div>
+      <div id="strategy-table-body" class="p-0">
+        <!-- JS will populate -->
+        <div class="p-4 text-center text-xs text-zinc-500">Loading...</div>
+      </div>
     </div>
   </div>
 
   <script>
+    // --- SETTINGS ---
     const NUM_SLOTS = 5;
     const NUM_CARDS = 10;
-    const FULL_MASK = (1 << NUM_CARDS) - 1; // 1023
     const SLOT_NAMES = ['A', 'B', 'C', 'D', 'E'];
+    const EPS = 1e-9; 
 
-    // This UI controls ONLY the FIRST MOVE mapping (card -> slot).
-    // After the first placement, the engine plays optimally (MDP/DP).
-    // Start from the known optimal first-move policy:
-    // 1->A, 2-4->B, 5-6->C, 7-9->D, 10->E
-    let currentStrategy = [0, 1, 1, 1, 2, 2, 3, 3, 3, 4];
-
-    // Memoization cache for DP
+    // --- STATE ---
+    let board = new Int8Array(NUM_SLOTS).fill(0);
+    let seenMask = 0;
+    let activeCard = null; 
     let memo = new Map();
 
-    // --- Initialization ---
     function init() {
       renderSlots();
-      renderNumbers();
-      setTimeout(calculateProbability, 50);
+      renderNumberPad();
+      updateWinProbability();
+      updateStrategyGuide();
     }
 
-    function renderSlots() {
-      const wrapper = document.getElementById('slots-wrapper');
-      wrapper.innerHTML = '';
-
-      SLOT_NAMES.forEach((name, index) => {
-        const div = document.createElement('div');
-        div.className = `slot-container flex flex-col items-center bg-zinc-900 border border-zinc-800 rounded-xl p-2 min-h-[160px] relative`;
-        div.dataset.slotIndex = index;
-
-        div.innerHTML = `
-          <div class="text-zinc-600 text-[10px] font-bold mb-3 absolute top-2">${name}</div>
-          <div class="slot-content w-full flex flex-col gap-1.5 items-center mt-6 pb-2 flex-grow" id="slot-${index}"></div>
-        `;
-        wrapper.appendChild(div);
-      });
+    // --- CORE CALCULATION (DP / EXPECTIMAX) ---
+    function getMemoKey(currentBoard, mask) {
+        return mask + ":" + currentBoard.join(',');
     }
 
-    function renderNumbers() {
-      for (let i = 0; i < NUM_SLOTS; i++) {
-        document.getElementById(`slot-${i}`).innerHTML = '';
-      }
-
-      currentStrategy.forEach((slotIndex, cardIndex) => {
-        const cardVal = cardIndex + 1;
-        const chip = createChip(cardVal);
-        document.getElementById(`slot-${slotIndex}`).appendChild(chip);
-      });
-
-      setupTouchAndDrag();
-    }
-
-    function createChip(number) {
-      const div = document.createElement('div');
-      let colorClass = "text-zinc-300 bg-zinc-800 border-zinc-700";
-      if (number === 1 || number === 10) colorClass = "text-indigo-200 bg-indigo-900/40 border-indigo-800/60";
-      div.className = `number-chip w-full border shadow-sm rounded-md text-center py-2.5 text-sm font-bold ${colorClass}`;
-      div.textContent = number;
-      div.dataset.number = number;
-      return div;
-    }
-
-    // --- Interaction Logic ---
-    let activeDrag = null;
-    let placeholder = null;
-
-    function setupTouchAndDrag() {
-      const chips = document.querySelectorAll('.number-chip');
-      chips.forEach(chip => {
-        chip.onmousedown = startDrag;
-        chip.ontouchstart = (e) => {
-          if (e.touches.length > 1) return;
-          startDrag(e.touches[0], chip);
-        };
-      });
-    }
-
-    function startDrag(e, targetChip) {
-      const chip = targetChip || e.target;
-      if (!chip.classList.contains('number-chip')) return;
-
-      activeDrag = chip;
-      const parent = chip.parentNode;
-
-      placeholder = document.createElement('div');
-      placeholder.className = 'chip-placeholder w-full';
-      parent.insertBefore(placeholder, chip);
-
-      const rect = chip.getBoundingClientRect();
-
-      chip.classList.add('dragging');
-      chip.style.width = rect.width + 'px';
-      chip.style.left = (e.clientX - rect.width / 2) + 'px';
-      chip.style.top = (e.clientY - rect.height / 2) + 'px';
-
-      document.body.appendChild(chip);
-
-      document.addEventListener('mousemove', onMove);
-      document.addEventListener('mouseup', onEnd);
-      document.addEventListener('touchmove', onTouchMove, { passive: false });
-      document.addEventListener('touchend', onEnd);
-    }
-
-    function onMove(e) {
-      if (!activeDrag) return;
-      moveChip(e.clientX, e.clientY);
-    }
-
-    function onTouchMove(e) {
-      if (!activeDrag) return;
-      e.preventDefault();
-      moveChip(e.touches[0].clientX, e.touches[0].clientY);
-    }
-
-    function moveChip(x, y) {
-      const width = activeDrag.offsetWidth;
-      const height = activeDrag.offsetHeight;
-      activeDrag.style.left = (x - width / 2) + 'px';
-      activeDrag.style.top = (y - height / 2) + 'px';
-
-      document.querySelectorAll('.slot-container').forEach(s => s.classList.remove('drag-over'));
-      const elBelow = document.elementFromPoint(x, y);
-      const slot = elBelow ? elBelow.closest('.slot-container') : null;
-      if (slot) slot.classList.add('drag-over');
-    }
-
-    function onEnd(e) {
-      if (!activeDrag) return;
-
-      document.removeEventListener('mousemove', onMove);
-      document.removeEventListener('mouseup', onEnd);
-      document.removeEventListener('touchmove', onTouchMove);
-      document.removeEventListener('touchend', onEnd);
-
-      const x = e.clientX || (e.changedTouches ? e.changedTouches[0].clientX : 0);
-      const y = e.clientY || (e.changedTouches ? e.changedTouches[0].clientY : 0);
-
-      const elBelow = document.elementFromPoint(x, y);
-      const slot = elBelow ? elBelow.closest('.slot-container') : null;
-
-      activeDrag.classList.remove('dragging');
-      activeDrag.style.position = '';
-      activeDrag.style.width = '';
-      activeDrag.style.left = '';
-      activeDrag.style.top = '';
-
-      if (slot) {
-        const content = slot.querySelector('.slot-content');
-        const num = parseInt(activeDrag.dataset.number, 10);
-        const siblings = [...content.querySelectorAll('.number-chip')];
-
-        if (activeDrag.parentNode === document.body) document.body.removeChild(activeDrag);
-
-        let inserted = false;
-        for (let sib of siblings) {
-          if (parseInt(sib.dataset.number, 10) > num) {
-            content.insertBefore(activeDrag, sib);
-            inserted = true;
-            break;
-          }
+    function solve(currentBoard, mask) {
+        // Validity Check
+        let filled = 0;
+        let lastVal = 0;
+        let isSorted = true;
+        
+        for(let i=0; i<NUM_SLOTS; i++) {
+            if (currentBoard[i] !== 0) {
+                filled++;
+                if (currentBoard[i] < lastVal) isSorted = false;
+                lastVal = currentBoard[i];
+            }
         }
-        if (!inserted) content.appendChild(activeDrag);
 
-        if (placeholder && placeholder.parentNode) placeholder.parentNode.removeChild(placeholder);
-      } else {
-        if (activeDrag.parentNode === document.body) document.body.removeChild(activeDrag);
-        if (placeholder && placeholder.parentNode) {
-          placeholder.parentNode.replaceChild(activeDrag, placeholder);
+        if (!isSorted) return 0.0;
+        if (filled === NUM_SLOTS) return 1.0;
+
+        const key = getMemoKey(currentBoard, mask);
+        if (memo.has(key)) return memo.get(key);
+
+        let totalProb = 0.0;
+        let remainingCount = 0;
+
+        for (let card = 1; card <= NUM_CARDS; card++) {
+            if (!((mask >> (card - 1)) & 1)) { 
+                remainingCount++;
+                let bestMoveProb = 0.0;
+                
+                for (let i = 0; i < NUM_SLOTS; i++) {
+                    if (currentBoard[i] === 0) {
+                        // Validity Test
+                        let valid = true;
+                        for (let l = 0; l < i; l++) if (currentBoard[l] !== 0 && currentBoard[l] > card) { valid = false; break; }
+                        if (valid) {
+                            for (let r = i + 1; r < NUM_SLOTS; r++) if (currentBoard[r] !== 0 && currentBoard[r] < card) { valid = false; break; }
+                        }
+
+                        if (valid) {
+                            let nextBoard = new Int8Array(currentBoard);
+                            nextBoard[i] = card;
+                            let prob = solve(nextBoard, mask | (1 << (card - 1)));
+                            if (prob > bestMoveProb) bestMoveProb = prob;
+                            if (bestMoveProb >= (1.0 - EPS)) break; 
+                        }
+                    }
+                }
+                totalProb += bestMoveProb;
+            }
         }
-      }
 
-      activeDrag = null;
-      placeholder = null;
-      document.querySelectorAll('.slot-container').forEach(s => s.classList.remove('drag-over'));
-
-      updateStrategyFromDOM();
-
-      const resultContainer = document.getElementById('result-container');
-      resultContainer.classList.add('calculating');
-      setTimeout(calculateProbability, 50);
+        if (remainingCount === 0) return 0.0; 
+        const result = totalProb / remainingCount;
+        memo.set(key, result);
+        return result;
     }
 
-    function updateStrategyFromDOM() {
-      for (let i = 0; i < NUM_SLOTS; i++) {
-        const container = document.getElementById(`slot-${i}`);
-        const chips = container.querySelectorAll('.number-chip');
-        chips.forEach(chip => {
-          const val = parseInt(chip.dataset.number, 10);
-          currentStrategy[val - 1] = i;
-        });
-      }
-    }
+    // --- NEW: FUTURE STRATEGY CALCULATOR ---
+    function updateStrategyGuide() {
+        const tableBody = document.getElementById('strategy-table-body');
+        
+        // 1. Find remaining cards
+        let remainingCards = [];
+        for (let c = 1; c <= NUM_CARDS; c++) {
+            if (!((seenMask >> (c - 1)) & 1)) remainingCards.push(c);
+        }
 
-    // --- PROBABILITY ENGINE (FIXED) ---
-    // Computes the TRUE optimal play AFTER the first move.
-    // Your draggable chips define only the first-move mapping.
+        if (remainingCards.length === 0) {
+            tableBody.innerHTML = '<div class="p-4 text-center text-xs text-green-500">Game Over!</div>';
+            return;
+        }
 
-    function calculateProbability() {
-      try {
-        memo.clear();
-        const board = new Int8Array(5); // all zeros
-        const result = solve(board, FULL_MASK, 0);
-        displayResults(result);
-      } catch (e) {
-        console.error(e);
-      } finally {
-        document.getElementById('result-container').classList.remove('calculating');
-      }
-    }
+        // 2. Find best slot for each remaining card
+        // slotMap[slotIndex] = [card, card, ...]
+        let slotMap = Array(NUM_SLOTS).fill().map(() => []);
+        let unplayableCards = [];
 
-    // Encode board into a small integer for faster memo keys
-    function boardKey(board) {
-      // base-11 encoding (values 0..10)
-      return board[0] + 11*board[1] + 121*board[2] + 1331*board[3] + 14641*board[4];
-    }
+        remainingCards.forEach(card => {
+            let bestProb = -1.0;
+            let bestSlots = [];
 
-    function isIncreasing(board) {
-      for (let i = 0; i < 4; i++) {
-        if (!(board[i] < board[i+1])) return false;
-      }
-      return true;
-    }
-
-    function solve(board, unseenMask, filledCount) {
-      if (filledCount === NUM_SLOTS) {
-        // With valid-move rules this should always be increasing, but keep it safe.
-        return isIncreasing(board) ? 1.0 : 0.0;
-      }
-
-      const key = `${filledCount}|${unseenMask}|${boardKey(board)}`;
-      if (memo.has(key)) return memo.get(key);
-
-      let total = 0.0;
-      let count = 0;
-
-      // Iterate available cards from unseenMask
-      let tempMask = unseenMask;
-      let card = 1;
-      while (tempMask > 0) {
-        if ((tempMask & 1) === 1) {
-          const nextMask = unseenMask ^ (1 << (card - 1));
-
-          let val = 0.0;
-
-          if (filledCount === 0) {
-            // FIRST MOVE is forced by your draggable mapping
-            const slot = currentStrategy[card - 1];
-            const newBoard = new Int8Array(board);
-            newBoard[slot] = card;
-            val = solve(newBoard, nextMask, filledCount + 1);
-          } else {
-            // AFTER first move: choose the BEST slot (optimal MDP action)
-            let best = 0.0;
-
-            for (let s = 0; s < NUM_SLOTS; s++) {
-              if (board[s] !== 0) continue;
-
-              // Validity: all filled left must be < card
-              let ok = true;
-              for (let l = 0; l < s; l++) {
-                if (board[l] !== 0 && board[l] > card) { ok = false; break; }
-              }
-              if (!ok) continue;
-
-              // Validity: all filled right must be > card
-              for (let r = s + 1; r < NUM_SLOTS; r++) {
-                if (board[r] !== 0 && board[r] < card) { ok = false; break; }
-              }
-              if (!ok) continue;
-
-              const newBoard = new Int8Array(board);
-              newBoard[s] = card;
-              const candidate = solve(newBoard, nextMask, filledCount + 1);
-              if (candidate > best) best = candidate;
+            // If this card were drawn, where would we put it?
+            for (let i = 0; i < NUM_SLOTS; i++) {
+                if (board[i] === 0) {
+                    // Validity check
+                    let valid = true;
+                    for (let l = 0; l < i; l++) if (board[l] !== 0 && board[l] > card) valid = false;
+                    for (let r = i + 1; r < NUM_SLOTS; r++) if (board[r] !== 0 && board[r] < card) valid = false;
+                    
+                    if (valid) {
+                        let nextBoard = new Int8Array(board);
+                        nextBoard[i] = card;
+                        let prob = solve(nextBoard, seenMask | (1 << (card - 1)));
+                        
+                        if (Math.abs(prob - bestProb) < EPS) {
+                            bestSlots.push(i);
+                        } else if (prob > bestProb) {
+                            bestProb = prob;
+                            bestSlots = [i];
+                        }
+                    }
+                }
             }
 
-            val = best; // if no valid slot, stays 0
-          }
+            if (bestProb < EPS) {
+                unplayableCards.push(card);
+            } else {
+                // Recommend only the first optimal slot for simplicity
+                slotMap[bestSlots[0]].push(card);
+            }
+        });
 
-          total += val;
-          count++;
+        // 3. Draw Table
+        let html = '';
+        
+        // Iterate slots
+        SLOT_NAMES.forEach((name, idx) => {
+            // Show if slot is empty and has recommended cards
+            if (board[idx] === 0 && slotMap[idx].length > 0) {
+                const cardsHtml = slotMap[idx].map(c => 
+                    `<span class="strategy-card-pill border border-zinc-600">${c}</span>`
+                ).join(' ');
+
+                html += `
+                <div class="strategy-row flex items-center px-4 py-3 hover:bg-zinc-800/30 transition-colors">
+                    <div class="w-12 text-sm font-bold text-zinc-400">Slot ${name}</div>
+                    <div class="flex-1 flex flex-wrap gap-2">
+                        <span class="text-xs text-zinc-500 mr-2 self-center">If drawn:</span>
+                        ${cardsHtml}
+                    </div>
+                </div>`;
+            }
+        });
+
+        if (unplayableCards.length > 0) {
+             const deadHtml = unplayableCards.map(c => `<span class="strategy-card-pill bg-red-900/50 text-red-200 border-red-900">${c}</span>`).join(' ');
+             html += `
+                <div class="strategy-row flex items-center px-4 py-3 bg-red-900/10">
+                    <div class="w-12 text-sm font-bold text-red-500">Doom</div>
+                    <div class="flex-1 flex flex-wrap gap-2">
+                        <span class="text-xs text-red-400 mr-2 self-center">Loses Game:</span>
+                        ${deadHtml}
+                    </div>
+                </div>`;
         }
-        tempMask >>= 1;
-        card++;
-      }
 
-      const avg = count ? (total / count) : 0.0;
-      memo.set(key, avg);
-      return avg;
+        if (html === '') {
+             html = '<div class="p-4 text-center text-xs text-zinc-500">No winning path.</div>';
+        }
+
+        tableBody.innerHTML = html;
     }
 
-    function displayResults(probability) {
-      const percent = (probability * 100).toFixed(2);
-      const wins = Math.round(probability * 30240); // 10*9*8*7*6
+    // --- UI FUNCTIONS ---
 
-      const percentDisplay = document.getElementById('percentage-display');
-      const fractionDisplay = document.getElementById('fraction-display');
+    function renderSlots() {
+      const container = document.getElementById('board-area');
+      container.innerHTML = '';
+      
+      board.forEach((val, index) => {
+        const div = document.createElement('div');
+        div.className = `slot-container flex flex-col items-center justify-center border border-zinc-800 rounded-xl h-24 relative cursor-pointer`;
+        div.onclick = () => handleSlotClick(index);
 
-      percentDisplay.textContent = `${percent}%`;
-      fractionDisplay.textContent = `${wins.toLocaleString()} / 30,240 scenarios`;
+        div.innerHTML = `<div class="text-zinc-700 text-[10px] font-bold absolute top-2">${SLOT_NAMES[index]}</div>`;
 
-      if (probability > 0.333) {
-        percentDisplay.className = "text-6xl font-black text-green-400 mb-2 tracking-tighter tabular-nums";
-      } else if (probability > 0.30) {
-        percentDisplay.className = "text-6xl font-black text-indigo-400 mb-2 tracking-tighter tabular-nums";
-      } else {
-        percentDisplay.className = "text-6xl font-black text-white mb-2 tracking-tighter tabular-nums";
+        if (val !== 0) {
+           const chip = document.createElement('div');
+           chip.className = `placed-chip w-10 h-10 rounded-full flex items-center justify-center font-bold text-white shadow-lg ${
+             val === 1 || val === 10 ? 'bg-indigo-600' : 'bg-zinc-700'
+           }`;
+           chip.textContent = val;
+           div.appendChild(chip);
+           div.classList.add('border-zinc-700');
+        } else {
+            const hint = document.createElement('div');
+            hint.className = "hint-text text-xs font-mono font-bold";
+            div.appendChild(hint);
+        }
+        container.appendChild(div);
+      });
+    }
+
+    function renderNumberPad() {
+      const container = document.getElementById('number-pad');
+      container.innerHTML = '';
+      
+      for (let i = 1; i <= NUM_CARDS; i++) {
+        const btn = document.createElement('button');
+        const isUsed = (seenMask >> (i - 1)) & 1;
+        btn.className = `number-btn w-full h-10 rounded-lg border font-bold text-sm ${
+          isUsed ? 'used text-zinc-600 border-zinc-800 bg-black' : 'text-zinc-300 border-zinc-700 bg-zinc-800 hover:bg-zinc-700'
+        }`;
+        if (activeCard === i) btn.classList.add('active-card');
+        btn.textContent = i;
+        btn.onclick = () => selectCard(i);
+        container.appendChild(btn);
       }
+    }
+
+    function selectCard(num) {
+        if ((seenMask >> (num - 1)) & 1) return;
+        activeCard = (activeCard === num) ? null : num;
+        renderNumberPad();
+        calculateBestMovesForActiveCard();
+    }
+
+    function handleSlotClick(slotIndex) {
+        if (activeCard === null) return;
+        if (board[slotIndex] !== 0) return;
+
+        // Local Validation
+        for (let l = 0; l < slotIndex; l++) if (board[l] !== 0 && board[l] > activeCard) { shakeBoard(); return; }
+        for (let r = slotIndex + 1; r < NUM_SLOTS; r++) if (board[r] !== 0 && board[r] < activeCard) { shakeBoard(); return; }
+
+        // Make Move
+        board[slotIndex] = activeCard;
+        seenMask |= (1 << (activeCard - 1));
+        activeCard = null;
+
+        renderSlots();
+        renderNumberPad();
+        updateWinProbability();
+        updateStrategyGuide(); 
+    }
+
+    function calculateBestMovesForActiveCard() {
+        const slots = document.querySelectorAll('.slot-container');
+        const hintText = document.getElementById('guidance-text');
+        
+        // Reset Styles Safely
+        slots.forEach((s, index) => {
+            const isFilled = board[index] !== 0;
+
+            let baseClass = `slot-container flex flex-col items-center justify-center border border-zinc-800 rounded-xl h-24 relative cursor-pointer`;
+            if (isFilled) baseClass += ' border-zinc-700';
+            s.className = baseClass;
+
+            const hintEl = s.querySelector('.hint-text');
+            if (hintEl) {
+                hintEl.textContent = '';
+                hintEl.className = 'hint-text text-xs font-mono font-bold hidden';
+            }
+        });
+
+        if (activeCard === null) {
+            hintText.textContent = "Select a card...";
+            hintText.className = "text-zinc-400 text-xs font-mono mt-2 h-4";
+            return;
+        }
+
+        let moves = [];
+        let maxProb = -1.0;
+
+        for (let i = 0; i < NUM_SLOTS; i++) {
+            if (board[i] !== 0) { moves.push({ index: i, type: 'filled', prob: 0 }); continue; }
+
+            let valid = true;
+            for (let l = 0; l < i; l++) if (board[l] !== 0 && board[l] > activeCard) valid = false;
+            for (let r = i + 1; r < NUM_SLOTS; r++) if (board[r] !== 0 && board[r] < activeCard) valid = false;
+
+            if (!valid) {
+                moves.push({ index: i, type: 'invalid', prob: 0 });
+            } else {
+                let nextBoard = new Int8Array(board);
+                nextBoard[i] = activeCard;
+                let prob = solve(nextBoard, seenMask | (1 << (activeCard - 1)));
+                moves.push({ index: i, type: 'valid', prob: prob });
+                if (prob > maxProb) maxProb = prob;
+            }
+        }
+
+        moves.forEach(m => {
+            const el = slots[m.index];
+            const hintEl = el.querySelector('.hint-text');
+
+            if (m.type === 'filled') return;
+            
+            if (m.type === 'invalid') {
+                el.classList.add('slot-invalid');
+            } else {
+                if (hintEl) {
+                    hintEl.classList.remove('hidden');
+                    hintEl.textContent = (m.prob * 100).toFixed(0) + '%';
+                    
+                    if (Math.abs(m.prob - maxProb) < EPS && maxProb > EPS) {
+                        el.classList.add('slot-best', 'border-green-500');
+                        hintEl.classList.add('text-green-400');
+                    } else if (m.prob < EPS) {
+                        el.classList.add('slot-bad');
+                    } else {
+                        el.classList.add('slot-valid');
+                        hintEl.classList.add('text-zinc-500');
+                    }
+                }
+            }
+        });
+        
+        if (maxProb < EPS) {
+             hintText.textContent = "No winning moves.";
+             hintText.className = "text-red-500 text-xs font-mono mt-2 h-4";
+        } else {
+             hintText.textContent = `Best outcome: ${(maxProb * 100).toFixed(1)}%`;
+             hintText.className = "text-green-400 text-xs font-mono mt-2 h-4";
+        }
+    }
+
+    function updateWinProbability() {
+        const prob = solve(board, seenMask);
+        const display = document.getElementById('prob-display');
+        const glow = document.getElementById('glow-bg');
+        
+        display.textContent = (prob * 100).toFixed(2) + '%';
+        
+        if (prob > 0.5) {
+            display.className = "text-5xl font-black text-green-400 tracking-tighter tabular-nums transition-colors duration-300";
+            glow.className = "absolute inset-0 opacity-20 bg-green-500 transition-opacity duration-500";
+        } else if (prob > 0.1) {
+            display.className = "text-5xl font-black text-indigo-400 tracking-tighter tabular-nums transition-colors duration-300";
+            glow.className = "absolute inset-0 opacity-10 bg-indigo-500 transition-opacity duration-500";
+        } else {
+            display.className = "text-5xl font-black text-red-500 tracking-tighter tabular-nums transition-colors duration-300";
+            glow.className = "absolute inset-0 opacity-10 bg-red-500 transition-opacity duration-500";
+        }
+    }
+
+    function resetGame() {
+        board = new Int8Array(NUM_SLOTS).fill(0);
+        seenMask = 0;
+        activeCard = null;
+        memo.clear();
+        renderSlots();
+        renderNumberPad();
+        updateWinProbability();
+        updateStrategyGuide();
+    }
+
+    function shakeBoard() {
+        const boardEl = document.getElementById('board-area');
+        boardEl.style.transform = "translateX(5px)";
+        setTimeout(() => boardEl.style.transform = "translateX(-5px)", 50);
+        setTimeout(() => boardEl.style.transform = "translateX(5px)", 100);
+        setTimeout(() => boardEl.style.transform = "translateX(0)", 150);
     }
 
     init();
